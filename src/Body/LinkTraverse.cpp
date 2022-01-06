@@ -174,8 +174,8 @@ void LinkTraverse::calcForwardKinematics(bool calcVelocity, bool calcAcceleratio
                 link->v().noalias() = child->v() - link->w().cross(arm);
                 
                 if(calcAcceleration){
-                    link->dw().noalias() = child->dw() - child->dq() * child->w().cross(sw) - (child->ddq() * sw);
-                    link->dv().noalias() = child->dv() - child->w().cross(child->w().cross(arm)) - child->dw().cross(arm);
+                    link->dw().noalias() = child->dw() - child->dq() * link->w().cross(sw) - (child->ddq() * sw);
+                    link->dv().noalias() = child->dv() - link->w().cross(link->w().cross(arm)) - link->dw().cross(arm);
                 }
             }
             break;
