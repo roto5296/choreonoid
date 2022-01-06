@@ -5,7 +5,9 @@
 #include "../Body.h"
 #include "../BodyLoader.h"
 #include "../BodyMotion.h"
+#include "../InverseDynamics.h"
 #include "../InverseKinematics.h"
+#include "../Jacobian.h"
 #include "../JointPath.h"
 #include "../LeggedBodyHelper.h"
 #include <cnoid/PyUtil>
@@ -18,6 +20,8 @@ namespace py = pybind11;
 namespace {
 
 using Matrix4RM = Eigen::Matrix<double, 4, 4, Eigen::RowMajor>;
+using MatrixXdRM
+    = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 }
 
@@ -80,7 +84,20 @@ PYBIND11_MODULE(Body, m)
         .def_property_readonly("numericalIkDefaultMaxIterations", &JointPath::numericalIkDefaultMaxIterations)
         .def_property_readonly("numericalIkDefaultMaxIkError", &JointPath::numericalIkDefaultMaxIkError)
         .def_property_readonly("numericalIkDefaultDampingConstant", &JointPath::numericalIkDefaultDampingConstant)
-        .def("customizeTarget", &JointPath::customizeTarget)
+        .def("customizeTarget", [](JointPath& self, int numTargetElements,
+            std::function<std::tuple<double, VectorXd>(void)> errorFunc,
+            std::function<MatrixXd(void)> jacobianFunc){
+                self.customizeTarget(
+                    numTargetElements,
+                    [errorFunc](VectorXd& out_error)->double{
+                        std::tuple<double, VectorXd> ret = errorFunc();
+                        out_error = std::get<1>(ret);
+                        return std::get<0>(ret);
+                    },
+                    [jacobianFunc](MatrixXd& out_Jacobian){ out_Jacobian = jacobianFunc(); }
+                );
+            }
+        )
         .def("calcInverseKinematics", (bool(JointPath::*)())&JointPath::calcInverseKinematics)
         .def("setBaseLinkGoal",
              [](JointPath& self, Eigen::Ref<Matrix4RM> T) -> JointPath& { return self.setBaseLinkGoal(Isometry3(T)); })
@@ -92,6 +109,16 @@ PYBIND11_MODULE(Body, m)
         .def("hasCustomIK", &JointPath::hasCustomIK)
         .def_property("name", &JointPath::name, &JointPath::setName)
         .def("setName", &JointPath::setName)
+        .def("calcJacobian", [](JointPath& self) -> MatrixXdRM {
+            Eigen::MatrixXd J;
+            self.calcJacobian(J);
+            return J;
+        })
+        .def("calcdJacobian", [](JointPath& self) -> MatrixXdRM {
+            Eigen::MatrixXd J;
+            self.calcdJacobian(J);
+            return J;
+        })
 
         // deprecated
         .def("getNumJoints", &JointPath::numJoints)
@@ -103,6 +130,17 @@ PYBIND11_MODULE(Body, m)
         ;
 
     m.def("getCustomJointPath", getCustomJointPath);
+    m.def("calcCMJacobian", [](Body& body, Link& base) -> MatrixXdRM {
+        Eigen::MatrixXd J;
+        calcCMJacobian(&body, &base, J);
+        return J;
+    });
+    m.def("calcCMdJacobian", [](Body& body, Link& base) -> MatrixXdRM {
+        Eigen::MatrixXd J;
+        calcCMdJacobian(&body, &base, J);
+        return J;
+    });
+    m.def("calcInverseDynamics", calcInverseDynamics);
 
     py::class_<BodyMotion, shared_ptr<BodyMotion>> bodyMotion(m, "BodyMotion");
     bodyMotion
