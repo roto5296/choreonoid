@@ -23,10 +23,12 @@ struct SubMass
 {
     double m;
     Vector3 mwc;
+    Vector3 mdwc;
     Matrix3d Iw;
     SubMass& operator+=(const SubMass& rhs){
         m += rhs.m;
         mwc += rhs.mwc;
+        mdwc += rhs.mdwc;
         Iw += rhs.Iw;
         return *this;
     }
@@ -38,12 +40,14 @@ void calcSubMass(Link* link, vector<SubMass>& subMasses, bool calcIw)
     SubMass& sub = subMasses[link->index()];
     sub.m = link->m();
     sub.mwc = link->m() * link->wc();
+    sub.mdwc = link->m() * (link->w().cross(link->R() * link->c()) + link->v());
 
     for(Link* child = link->child(); child; child = child->sibling()){
         calcSubMass(child, subMasses, calcIw);
         SubMass& childSub = subMasses[child->index()];
         sub.m += childSub.m;
         sub.mwc += childSub.mwc;
+        sub.mdwc += childSub.mdwc;
     }
     
     if(calcIw){
@@ -133,6 +137,94 @@ void calcCMJacobian(Body* body, Link* base, Eigen::MatrixXd& J)
         J.block(0, c, 3, 3).setIdentity();
 
         const Vector3 dp = subMasses[0].mwc / body->mass() - rootLink->p();
+
+        J.block(0, c + 3, 3, 3) <<
+            0.0,  dp(2), -dp(1),
+            -dp(2),    0.0,  dp(0),
+            dp(1), -dp(0),    0.0;
+    }
+}
+
+/**
+   @brief compute CoM dJacobian
+   @param base link fixed to the environment
+   @param J CoM dJacobian
+   @note Link::wc must be computed by calcCM() before calling
+*/
+void calcCMdJacobian(Body* body, Link* base, Eigen::MatrixXd& J)
+{
+    // prepare subm, submwc
+
+    const int nj = body->numJoints();
+    vector<SubMass> subMasses(body->numLinks());
+    Link* rootLink = body->rootLink();
+    std::vector<int> sgn(nj, 1);
+
+    if(!base){
+        calcSubMass(rootLink, subMasses, false);
+        J.resize(3, nj + 6);
+
+    } else {
+        JointPath path(rootLink, base);
+        Link* skip = path.joint(0);
+        SubMass& sub = subMasses[skip->index()];
+        sub.m = rootLink->m();
+        sub.mwc = rootLink->m() * rootLink->wc();
+        sub.mdwc = rootLink->m() * (rootLink->w().cross(rootLink->R() * rootLink->c()) + rootLink->v());
+
+        for(Link* child = rootLink->child(); child; child = child->sibling()){
+            if(child != skip){
+                calcSubMass(child, subMasses, false);
+                const SubMass& c = subMasses[child->index()];
+                sub.m += c.m;
+                sub.mwc += c.mwc;
+                sub.mdwc += c.mdwc;
+            }
+        }
+
+        // assuming there is no branch between base and root
+        for(int i=1; i < path.numJoints(); i++){
+            Link* joint = path.joint(i);
+            const Link* parent = joint->parent();
+            SubMass& sub = subMasses[joint->index()];
+            sub.m = parent->m();
+            sub.mwc = parent->m() * parent->wc();
+            sub.mdwc = parent->m() * (parent->w().cross(parent->R() * parent->c()) + parent->v());
+            const SubMass& p = subMasses[parent->index()];
+            sub.m += p.m;
+            sub.mwc += p.mwc;
+            sub.mdwc += p.mdwc;
+        }
+
+        J.resize(3, nj);
+
+        for(int i=0; i < path.numJoints(); i++){
+            sgn[path.joint(i)->jointId()] = -1;
+        }
+    }
+
+    // compute Jacobian
+    for(int i=0; i < nj; i++){
+        Link* joint = body->joint(i);
+        if(joint->isRotationalJoint()){
+            const Vector3 omega = sgn[joint->jointId()] * joint->R() * joint->a();
+            const Vector3 domega = joint->w().cross(omega);
+            const SubMass& sub = subMasses[joint->index()];
+            const Vector3 arm = (sub.mwc - sub.m * joint->p()) / body->mass();
+            const Vector3 darm = (sub.mdwc - sub.m * joint->v()) / body->mass();
+            const Vector3 dp = domega.cross(arm)+omega.cross(darm);
+            J.col(joint->jointId()) = dp;
+        } else {
+            std::cerr << "calcCMdJacobian() : unsupported jointType("
+                      << joint->jointType() << std::endl;
+        }
+    }
+
+    if(!base){
+        const int c = nj;
+        J.block(0, c, 3, 3).setIdentity();
+
+        const Vector3 dp = subMasses[0].mdwc / body->mass() - rootLink->v();
 
         J.block(0, c + 3, 3, 3) <<
             0.0,  dp(2), -dp(1),

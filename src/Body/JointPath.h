@@ -130,6 +130,7 @@ public:
         const Vector3& base_p, const Matrix3& base_R, const Vector3& end_p, const Matrix3& end_R);
     [[deprecated]]
     void calcJacobian(Eigen::MatrixXd& out_J) const;
+    void calcdJacobian(Eigen::MatrixXd& out_J) const;
     [[deprecated("Use hasCustomIK")]]
     bool hasAnalyticalIK() const;
     [[deprecated("Use setCustomIkDisabled.")]]

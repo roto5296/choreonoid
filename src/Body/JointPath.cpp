@@ -219,6 +219,55 @@ void JointPath::calcJacobian(Eigen::MatrixXd& out_J) const
 }
 
 
+void JointPath::calcdJacobian(Eigen::MatrixXd& out_J) const
+{
+    const int n = joints_.size();
+    out_J.resize(6, n);
+
+    if(n > 0){
+
+        Link* targetLink = linkPath_.endLink();
+
+        for(int i=0; i < n; ++i){
+
+            Link* link = joints_[i];
+
+            switch(link->jointType()){
+
+            case Link::REVOLUTE_JOINT:
+            {
+                Vector3 omega = link->R() * link->a();
+                Vector3 domega = link->w().cross(omega);
+                const Vector3 arm = targetLink->p() - link->p();
+                const Vector3 darm = targetLink->v() - link->v();
+                if(!isJointDownward(i)){
+                    omega = -omega;
+                    domega = -domega;
+                }
+                out_J.col(i) << domega.cross(arm)+omega.cross(darm), domega;
+            }
+            break;
+
+            case Link::PRISMATIC_JOINT:
+            {
+                Vector3 dp = link->R() * link->d();
+                Vector3 ddp = link->w().cross(dp);
+                if(!isJointDownward(i)){
+                    dp = -dp;
+                    ddp = -ddp;
+                }
+                out_J.col(i) << ddp, Vector3::Zero();
+            }
+            break;
+
+            default:
+                out_J.col(i).setZero();
+            }
+        }
+    }
+}
+
+
 NumericalIK* JointPath::getOrCreateNumericalIK()
 {
     if(!numericalIK){
